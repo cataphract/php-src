@@ -393,7 +393,7 @@ static void _array_do_unit(zval *elem,
 {
 	switch (next_type) {
 	case PART_TYPE_NONE:
-		zval_addref_p(elem);
+		SEPARATE_ARG_IF_REF(elem); /* simply increments refcount if not ref */
 		zend_hash_next_index_insert(Z_ARRVAL_P(w), &elem, sizeof(elem), NULL);
 		break;
 	case PART_TYPE_MULTIPLE: {
