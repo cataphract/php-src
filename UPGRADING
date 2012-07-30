@@ -93,6 +93,8 @@ PHP X.Y UPGRADE NOTES
   instead.
 - IntlDateFormatter::format() and datefmt_format() now also accept an
   IntlCalendar object for formatting.
+- ReflectionProperty::getValue(): obtaining the value of non-existent dynamic
+  properties is no longer allowed; see bug #62694.
 
 ========================================
 5. New Functions
