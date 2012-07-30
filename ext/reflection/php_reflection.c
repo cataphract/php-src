@@ -4989,6 +4989,10 @@ ZEND_METHOD(reflection_property, getValue)
 		if (member_p != EG(uninitialized_zval_ptr)) {
 			zval_add_ref(&member_p);
 			zval_ptr_dtor(&member_p);
+		} else {
+			if (ref->prop.flags & ZEND_ACC_IMPLICIT_PUBLIC) {
+				_DO_THROW("Dynamic property does not exist in given instance");
+			}
 		}
 	}
 }
