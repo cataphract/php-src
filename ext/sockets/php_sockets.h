@@ -99,14 +99,6 @@ PHP_SOCKETS_API int php_sockets_le_socket(void);
 
 #define php_sockets_le_socket_name "Socket"
 
-/* Prototypes */
-#ifdef ilia_0 /* not needed, only causes a compiler warning */
-static int php_open_listen_sock(php_socket **php_sock, int port, int backlog TSRMLS_DC);
-static int php_accept_connect(php_socket *in_sock, php_socket **new_sock, struct sockaddr *la TSRMLS_DC);
-static int php_read(php_socket *sock, void *buf, size_t maxlen, int flags);
-static char *php_strerror(int error TSRMLS_DC);
-#endif
-
 ZEND_BEGIN_MODULE_GLOBALS(sockets)
 	int last_error;
 	char *strerror_buf;
@@ -117,6 +109,16 @@ ZEND_END_MODULE_GLOBALS(sockets)
 #else
 #define SOCKETS_G(v) (sockets_globals.v)
 #endif
+
+ZEND_EXTERN_MODULE_GLOBALS(sockets);
+
+char *sockets_strerror(int error TSRMLS_DC);
+
+#define PHP_SOCKET_ERROR(socket,msg,errn) \
+		socket->error = errn;	\
+		SOCKETS_G(last_error) = errn; \
+		php_error_docref(NULL TSRMLS_CC, E_WARNING, "%s [%d]: %s", msg, errn, \
+				sockets_strerror(errn TSRMLS_CC))
 
 #else
 #define phpext_sockets_ptr NULL
