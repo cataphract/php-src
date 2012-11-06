@@ -712,7 +712,7 @@ PHP_MINIT_FUNCTION(sockets)
 	REGISTER_LONG_CONSTANT("IPV6_UNICAST_HOPS",			IPV6_UNICAST_HOPS,	CONST_CS | CONST_PERSISTENT);
 #endif
 
-	_socket_sendrecvmsg_init(INIT_FUNC_ARGS_PASSTHRU);
+	php_socket_sendrecvmsg_init(INIT_FUNC_ARGS_PASSTHRU);
 
 	return SUCCESS;
 }
@@ -735,7 +735,7 @@ PHP_RSHUTDOWN_FUNCTION(sockets)
 		efree(SOCKETS_G(strerror_buf));
 		SOCKETS_G(strerror_buf) = NULL;
 	}
-	_socket_sendrecvmsg_shutdown(SHUTDOWN_FUNC_ARGS_PASSTHRU);
+	php_socket_sendrecvmsg_shutdown(SHUTDOWN_FUNC_ARGS_PASSTHRU);
 
 	return SUCCESS;
 }
