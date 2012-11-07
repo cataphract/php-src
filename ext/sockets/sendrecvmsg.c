@@ -1783,6 +1783,7 @@ int php_do_getsockopt_ipv6_rfc3542(php_socket *php_sock, int level, int optname,
 	case IPV6_PKTINFO:
 		size = sizeof(struct in6_pktinfo);
 		reader = &to_zval_read_in6_pktinfo;
+		break;
 #endif
 	default:
 		return 1;
