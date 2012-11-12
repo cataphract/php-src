@@ -12,6 +12,9 @@
 #include <netinet/in.h>
 #include <sys/un.h>
 
+#include <sys/ioctl.h>
+#include <net/if.h>
+
 #include <limits.h>
 #include <stdarg.h>
 #include <stddef.h>
@@ -331,25 +334,6 @@ void from_zval_write_int(const zval *arr_value, char *field, ser_context *ctx)
 	}
 
 	ival = (int)lval;
-	memcpy(field, &ival, sizeof(ival));
-}
-static void from_zval_write_unsigned(const zval *arr_value, char *field, ser_context *ctx)
-{
-	long lval;
-	unsigned ival;
-
-	lval = from_zval_integer_common(arr_value, ctx);
-	if (ctx->err.has_error) {
-		return;
-	}
-
-	if (sizeof(long) > sizeof(ival) && (lval < 0 || lval > UINT_MAX)) {
-		do_from_zval_err(ctx, "%s", "given PHP integer is out of bounds "
-				"for a native unsigned int");
-		return;
-	}
-
-	ival = (unsigned)lval;
 	memcpy(field, &ival, sizeof(ival));
 }
 static void from_zval_write_uint32(const zval *arr_value, char *field, ser_context *ctx)
@@ -1191,11 +1175,72 @@ void to_zval_read_msghdr(const char *msghdr_c, zval *zv, res_context *ctx)
 	to_zval_read_aggregation(msghdr_c, zv, descriptors, ctx);
 }
 
+/* CONVERSIONS for if_index */
+static void from_zval_write_ifindex(const zval *zv, char *uinteger, ser_context *ctx)
+{
+	unsigned	ret;
+	zval		lzval = zval_used_for_init;
+
+	if (Z_TYPE_P(zv) == IS_LONG) {
+		if (Z_LVAL_P(zv) < 0 || Z_LVAL_P(zv) > UINT_MAX) { /* allow 0 (unspecified interface) */
+			do_from_zval_err(ctx, "the interface index cannot be negative or "
+					"larger than %u; given %ld", UINT_MAX, Z_LVAL_P(zv));
+		} else {
+			ret = (unsigned)Z_LVAL_P(zv);
+		}
+	} else {
+		if (Z_TYPE_P(zv) != IS_STRING) {
+			ZVAL_COPY_VALUE(&lzval, zv);
+			zval_copy_ctor(&lzval);
+			convert_to_string(&lzval);
+			zv = &lzval;
+		}
+
+#if HAVE_IF_NAMETOINDEX
+		ret = if_nametoindex(Z_STRVAL_P(zv));
+		if (ret == 0) {
+			do_from_zval_err(ctx, "no interface with name \"%s\" could be "
+					"found", Z_STRVAL_P(zv));
+		}
+#elif defined(SIOCGIFINDEX)
+		{
+			struct ifreq ifr;
+			if (strlcpy(ifr.ifr_name, Z_STRVAL_P(zv), sizeof(ifr.ifr_name))
+					>= sizeof(ifr.ifr_name)) {
+				do_from_zval_err(ctx, "the interface name \"%s\" is too large ",
+						Z_STRVAL_P(zv));
+			} else if (ioctl(ctx->sock->bsd_socket, SIOCGIFINDEX, &ifr) < 0) {
+				if (errno == ENODEV) {
+					do_from_zval_err(ctx, "no interface with name \"%s\" could be "
+							"found", Z_STRVAL_P(zv));
+				} else {
+					do_from_zval_err(ctx, "error fetching interface index for "
+							"interface with name \"%s\" (errno %d)",
+							Z_STRVAL_P(zv), errno);
+				}
+			} else {
+				ret = (unsigned)ifr.ifr_ifindex;
+			}
+		}
+#else
+		do_from_zval_err(ctx,
+				"this platform does not support looking up an interface by "
+				"name, an integer interface index must be supplied instead");
+#endif
+	}
+
+	if (!ctx->err.has_error) {
+		memcpy(uinteger, &ret, sizeof(ret));
+	}
+
+	zval_dtor(&lzval);
+}
+
 /* CONVERSIONS for struct in6_pktinfo */
 #ifdef IPV6_PKTINFO
 static const field_descriptor descriptors_in6_pktinfo[] = {
 		{"addr", sizeof("addr"), 1, offsetof(struct in6_pktinfo, ipi6_addr), from_zval_write_sin6_addr, to_zval_read_sin6_addr},
-		{"ifindex", sizeof("ifindex"), 1, offsetof(struct in6_pktinfo, ipi6_ifindex), from_zval_write_unsigned, to_zval_read_unsigned},
+		{"ifindex", sizeof("ifindex"), 1, offsetof(struct in6_pktinfo, ipi6_ifindex), from_zval_write_ifindex, to_zval_read_unsigned},
 		{0}
 };
 void from_zval_write_in6_pktinfo(const zval *container, char *in6_pktinfo_c, ser_context *ctx)
