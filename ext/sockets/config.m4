@@ -19,7 +19,7 @@ if test "$PHP_SOCKETS" != "no"; then
   fi 
 
   AC_CHECK_FUNCS([hstrerror socketpair if_nametoindex if_indextoname])
-  AC_CHECK_HEADERS([netdb.h netinet/tcp.h sys/un.h sys/sockio.h errno.h]) 
+  AC_CHECK_HEADERS([netdb.h netinet/tcp.h sys/un.h sys/sockio.h errno.h ifaddrs.h]) 
   AC_TRY_COMPILE([
 #include <sys/types.h>
 #include <sys/socket.h>

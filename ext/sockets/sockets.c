@@ -83,6 +83,11 @@
 # if HAVE_IF_NAMETOINDEX
 #  include <net/if.h>
 # endif
+//XXX: remove this
+#define HAVE_IFADDRS_H 1
+# if HAVE_IFADDRS_H
+#  include <ifaddrs.h>
+# endif
 #endif
 
 #include "sockaddr_conv.h"
@@ -2265,6 +2270,27 @@ PHP_FUNCTION(socket_import_stream)
 	ZEND_REGISTER_RESOURCE(return_value, retsock, le_socket);
 }
 /* }}} */
+
+/* {{{ proto void socket_getifaddrs(int family)
+   Get interface addresses */
+PHP_FUNCTION(socket_getifaddrs)
+{
+	int				family = AF_UNSPEC;
+	struct ifaddrs	*ifaddr;
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "l", &family) == FAILURE) {
+		return;
+	}
+
+#if HAVE_IFADDRS_H
+	if (getifaddrs(&ifaddr) == -1) {
+		SOCKETS_G(last_error) = errno;
+		php_error_docref(NULL TSRMLS_CC, E_WARNING, "Call to getifaddrs() has "
+				"failed [%d]: %s", errno, sockets_strerror(errno TSRMLS_CC));
+	}
+#endif
+
+}
 
 #endif
 

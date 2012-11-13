@@ -1236,6 +1236,33 @@ static void from_zval_write_ifindex(const zval *zv, char *uinteger, ser_context 
 	zval_dtor(&lzval);
 }
 
+/* CONVERSIONS for ifaddrs */
+static void to_zval_read_cstring_ptr(const char *str_ptr, zval *zv, res_context *ctx)
+{
+	ZVAL_STRING(zv, str_ptr ? *(const char **)str_ptr : "", 1);
+}
+static const field_descriptor descriptors_getifaddr_proto[] = {
+		{"name", sizeof("name"), 0, offsetof(struct ifaddrs, ifa_name), 0, to_zval_read_cstring_ptr},
+		{"flags", sizeof("flags"), 0, offsetof(struct ifaddrs, ifa_flags), 0, to_zval_read_unsigned},
+		{"addr", sizeof("addr"), 0, offsetof(struct ifaddrs, ifa_addr), 0, to_zval_read_sockaddr_aux},
+		{"netmask", sizeof("netmask"), 0, offsetof(struct ifaddrs, ifa_netmask), 0, to_zval_read_sockaddr_aux},
+		{"ifu", sizeof("ifu"), 0, offsetof(struct ifaddrs, ifa_ifu), 0, to_zval_read_sockaddr_aux},
+		/*{"data", sizeof("data"), 0, offsetof(struct ifaddrs, ifa_data), 0, XXX}, */
+		{0}
+};
+static void to_zval_read_ifaddrs(const char *ifaddrs, zval *zv, res_context *ctx)
+{
+	const struct ifaddrs *ifa;
+
+	array_init(zv);
+
+	for (ifa = (struct ifaddrs *)ifaddrs; ifa != NULL; ifa = ifa->ifa_next) {
+		if (ifa->ifa_addr == NULL) {
+			continue;
+		}
+	}
+}
+
 /* CONVERSIONS for struct in6_pktinfo */
 #ifdef IPV6_PKTINFO
 static const field_descriptor descriptors_in6_pktinfo[] = {
