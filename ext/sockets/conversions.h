@@ -60,6 +60,8 @@ void from_zval_write_msghdr_send(const zval *container, char *msghdr_c, ser_cont
 void from_zval_write_msghdr_recv(const zval *container, char *msghdr_c, ser_context *ctx);
 void to_zval_read_msghdr(const char *msghdr_c, zval *zv, res_context *ctx);
 
+void to_zval_read_ifaddrs(const char *ifaddrs, zval *zv, res_context *ctx);
+
 /* ENTRY POINTS FOR CONVERSIONS */
 void *from_zval_run_conversions(const zval				*container,
 								php_socket				*sock,

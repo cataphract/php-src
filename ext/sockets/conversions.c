@@ -182,7 +182,10 @@ static unsigned from_array_iterate(const zval *arr,
 			!ctx->err.has_error
 			&& zend_hash_get_current_data_ex(Z_ARRVAL_P(arr), (void **)&elem, &pos) == SUCCESS;
 			zend_hash_move_forward_ex(Z_ARRVAL_P(arr), &pos), i++) {
-		if (snprintf(buf, sizeof(buf), "element #%u", i) >= sizeof(buf)) {
+    	int ret;
+
+    	ret = snprintf(buf, sizeof(buf), "element #%u", i);
+		if (ret < 0 || ret >= sizeof(buf)) {
 			memcpy(buf, "element", sizeof("element"));
 		}
 		zend_llist_add_element(&ctx->keys, &bufp);
@@ -879,8 +882,10 @@ static void from_zval_write_control_array(const zval *arr, char *msghdr_c, ser_c
 			!ctx->err.has_error
 			&& zend_hash_get_current_data_ex(Z_ARRVAL_P(arr), (void **)&elem, &pos) == SUCCESS;
 			zend_hash_move_forward_ex(Z_ARRVAL_P(arr), &pos)) {
+    	int ret;
 
-		if (snprintf(buf, sizeof(buf), "element #%u", (unsigned)i++) >= sizeof(buf)) {
+    	ret = snprintf(buf, sizeof(buf), "element #%u", (unsigned)i++);
+		if (ret < 0 || ret >= sizeof(buf)) {
 			memcpy(buf, "element", sizeof("element"));
 		}
 		zend_llist_add_element(&ctx->keys, &bufp);
@@ -958,12 +963,14 @@ static void to_zval_read_control_array(const char *msghdr_c, zval *zv, res_conte
 	for (cmsg = CMSG_FIRSTHDR(msg);
 			cmsg != NULL && !ctx->err.has_error;
 			cmsg = CMSG_NXTHDR(msg,cmsg)) {
-		zval *elem;
+		zval	*elem;
+		int		ret;
 
 		ALLOC_INIT_ZVAL(elem);
 		add_next_index_zval(zv, elem);
 
-		if (snprintf(buf, sizeof(buf), "element #%u", (unsigned)i++) >= sizeof(buf)) {
+		ret = snprintf(buf, sizeof(buf), "element #%u", (unsigned)i++);
+		if (ret < 0 || ret >= sizeof(buf)) {
 			memcpy(buf, "element", sizeof("element"));
 		}
 		zend_llist_add_element(&ctx->keys, &bufp);
@@ -1250,16 +1257,51 @@ static const field_descriptor descriptors_getifaddr_proto[] = {
 		/*{"data", sizeof("data"), 0, offsetof(struct ifaddrs, ifa_data), 0, XXX}, */
 		{0}
 };
-static void to_zval_read_ifaddrs(const char *ifaddrs, zval *zv, res_context *ctx)
+void to_zval_read_ifaddrs(const char *ifaddrs, zval *zv, res_context *ctx)
 {
-	const struct ifaddrs *ifa;
+	const struct ifaddrs	*ifa;
+	char 					descriptors_c[sizeof(descriptors_getifaddr_proto)];
+	field_descriptor		*descriptors = (field_descriptor *)descriptors_c;
+	char					buf[sizeof("element #4294967295")];
+	char					*bufp = buf;
+	uint32_t				i;
 
 	array_init(zv);
 
-	for (ifa = (struct ifaddrs *)ifaddrs; ifa != NULL; ifa = ifa->ifa_next) {
-		if (ifa->ifa_addr == NULL) {
+	memcpy(descriptors_c, descriptors_getifaddr_proto, sizeof(descriptors_c));
+
+	for (ifa = (struct ifaddrs *)ifaddrs, i = 1;
+			ifa != NULL && !ctx->err.has_error;
+			ifa = ifa->ifa_next, i++) {
+		zval	*elem;
+		int		ret;
+
+		if (ifa->ifa_addr == NULL || (ifa->ifa_addr->sa_family != AF_INET &&
+				ifa->ifa_addr->sa_family != AF_INET6)) {
 			continue;
 		}
+
+		if (ifa->ifa_flags & IFF_BROADCAST) {
+			descriptors[4].name = "broadaddr";
+			descriptors[4].name_size = sizeof("broadaddr");
+		} else {
+			descriptors[4].name = "dstaddr";
+			descriptors[4].name_size = sizeof("dstaddr");
+		}
+
+		MAKE_STD_ZVAL(elem);
+		array_init_size(elem, 6);
+		add_next_index_zval(zv, elem);
+
+		ret = snprintf(buf, sizeof(buf), "element #%u", (unsigned)i);
+		if (ret < 0 || ret >= sizeof(buf)) {
+			memcpy(buf, "element", sizeof("element"));
+		}
+		zend_llist_add_element(&ctx->keys, &bufp);
+
+		to_zval_read_aggregation((const char *)ifa, elem, descriptors, ctx);
+
+		zend_llist_remove_tail(&ctx->keys);
 	}
 }
 

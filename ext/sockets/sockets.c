@@ -2276,7 +2276,9 @@ PHP_FUNCTION(socket_import_stream)
 PHP_FUNCTION(socket_getifaddrs)
 {
 	int				family = AF_UNSPEC;
+#if HAVE_IFADDRS_H
 	struct ifaddrs	*ifaddr;
+#endif
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "l", &family) == FAILURE) {
 		return;
@@ -2288,6 +2290,8 @@ PHP_FUNCTION(socket_getifaddrs)
 		php_error_docref(NULL TSRMLS_CC, E_WARNING, "Call to getifaddrs() has "
 				"failed [%d]: %s", errno, sockets_strerror(errno TSRMLS_CC));
 	}
+#else
+	php_error_docref(NULL TSRMLS_CC, E_WARNING, "getifaddrs() not available", errno, sockets_strerror(errno TSRMLS_CC));
 #endif
 
 }
