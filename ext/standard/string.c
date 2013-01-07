@@ -23,6 +23,7 @@
 /* Synced with php 3.0 revision 1.193 1999-06-16 [ssb] */
 
 #include <stdio.h>
+#include <stdint.h>
 #include "php.h"
 #include "php_rand.h"
 #include "php_string.h"
@@ -57,6 +58,7 @@
 #include "php_globals.h"
 #include "basic_functions.h"
 #include "php_smart_str.h"
+#include <Zend/zend_exceptions.h>
 #ifdef ZTS
 #include "TSRM.h"
 #endif
@@ -2772,112 +2774,257 @@ PHPAPI char *php_strtr(char *str, int len, char *str_from, char *str_to, int trl
 }
 /* }}} */
 
+/* {{{ php_strtr_array_prepare
+ */
+typedef uint16_t strtr_h;
+struct strtr_lenspec {
+	int length;
+	strtr_h power; /* 33 to the power of length - 1, mod 2^16 */
+	strtr_h last_hash;
+};
+struct strtr_pat_node {
+	const char *str;
+	int str_len;
+	int free_str;
+	const char *repl;
+	int repl_len;
+	int free_repl;
+	struct strtr_pat_node *next;
+	struct strtr_pat_node *next_alloc;
+};
+#define STRTR_HT_SIZE 0x2000 /* power of 2 less than or equal to 0x10000 */
+#define STRTR_HT_MASK (STRTR_HT_SIZE - 1)
+struct strtr_array_data {
+	struct strtr_pat_node *patterns[STRTR_HT_SIZE]; /* index: modified hash & 0x3ffff */
+	int min_patlen;
+	struct strtr_pat_node *first_alloc;
+	int lengths_len;
+	struct strtr_lenspec lengths[1];
+};
+static void php_strtr_free_array_data(struct strtr_array_data *data)
+{
+	struct strtr_pat_node *node = data->first_alloc;
+	while (node) {
+		struct strtr_pat_node *cur = node;
+		node = node->next_alloc;
+		if (cur->free_str) {
+			efree((void*)cur->str);
+		}
+		if (cur->free_repl) {
+			efree((void*)cur->repl);
+		}
+		efree(cur);
+	}
+	efree(data);
+}
+static inline int php_strtr_compare_len(const void *a1, const void *a2)
+{
+	const struct strtr_lenspec	*len1 = a1,
+								*len2 = a2;
+
+	return len2->length - len1->length; /* reverse order */
+}
+static inline strtr_h php_strtr_hash(const char *str, int len)
+{
+	strtr_h res = 0;
+	int i;
+	for (i = 0; i < len; i++) {
+		res = ((res << 5) + res) + (unsigned char)str[i];
+	}
+	return res;
+}
+static struct strtr_array_data *php_strtr_array_prepare(int slen, HashTable *pats)
+{
+	struct strtr_array_data *data;
+	struct strtr_pat_node *last_alloc = NULL;
+	HashPosition hpos;
+	zval **entry;
+	int num_pats = zend_hash_num_elements(pats),
+		i = 0;
+
+	data = safe_emalloc(num_pats, sizeof(data->lengths), sizeof(*data));
+	memset(data, '\0', num_pats * sizeof(data->lengths) + sizeof(*data));
+	data->min_patlen = INT_MAX;
+
+	for (zend_hash_internal_pointer_reset_ex(pats, &hpos);
+			zend_hash_get_current_data_ex(pats, (void **)&entry, &hpos) == SUCCESS;
+			zend_hash_move_forward_ex(pats, &hpos)) {
+		char	*string_key;
+		uint  	string_key_len;
+		ulong	num_key;
+		int		free_str = 0,
+				free_repl = 0;
+		strtr_h	hash;
+		struct strtr_pat_node
+				*stored_node,
+				*cur_node;
+
+		switch (zend_hash_get_current_key_ex(pats, &string_key, &string_key_len, &num_key, 0, &hpos)) {
+		case HASH_KEY_IS_LONG:
+			string_key_len = 1 + zend_spprintf(&string_key, 0, "%ld", (long)num_key);
+			free_str = 1;
+			/* break missing intentionally */
+
+		case HASH_KEY_IS_STRING:
+			string_key_len--; /* exclude final '\0' */
+			if (string_key_len == 0) { /* empty string given as pattern */
+				php_strtr_free_array_data(data);
+				return NULL;
+			}
+			if (string_key_len > slen) { /* this pattern can never match */
+				continue;
+			}
+			data->min_patlen = MIN(data->min_patlen, string_key_len);
+
+			data->lengths[i++].length = string_key_len;
+
+			cur_node = emalloc(sizeof *cur_node);
+			cur_node->str = string_key;
+			cur_node->str_len = string_key_len;
+			cur_node->free_str = free_str;
+			cur_node->next = NULL;
+			cur_node->next_alloc = NULL;
+
+			if (Z_TYPE_PP(entry) != IS_STRING) {
+				zval *tzv = *entry;
+				zval_addref_p(tzv);
+				SEPARATE_ZVAL(&tzv);
+				convert_to_string(tzv);
+				entry = &tzv;
+				free_repl = 1;
+			}
+			cur_node->repl = Z_STRVAL_PP(entry);
+			cur_node->repl_len = Z_STRLEN_PP(entry);
+			cur_node->free_repl = free_repl;
+			if (free_repl) {
+				efree(*entry);
+			}
+
+			if (last_alloc != NULL) {
+				last_alloc->next_alloc = cur_node;
+			} else {
+				data->first_alloc = cur_node;
+			}
+			last_alloc = cur_node;
+
+			hash = php_strtr_hash(string_key, string_key_len);
+			stored_node = data->patterns[hash & STRTR_HT_MASK];
+			if (stored_node == NULL) {
+				data->patterns[hash & STRTR_HT_MASK] = cur_node;
+			} else {
+				while (stored_node->next != NULL) {
+					stored_node = stored_node->next;
+				}
+				stored_node->next = cur_node;
+			}
+		}
+	}
+
+	{
+		int	last_len = -1,
+			jwrite,
+			jread;
+		zend_qsort(data->lengths, i, sizeof(data->lengths), php_strtr_compare_len);
+		/* now delete duplicates and fill in ->power */
+		for (jwrite = 0, jread = 0;
+				jread < i;
+				jread++) {
+			struct strtr_lenspec *len = &data->lengths[jread];
+			int l;
+
+			if (len->length == last_len) {
+				continue;
+			}
+
+			data->lengths[jwrite] = data->lengths[jread];
+
+			for (l = 1, data->lengths[jwrite].power = 1; l < len->length; l++) {
+				data->lengths[jwrite].power *= 33;
+			}
+
+			jwrite++;
+			last_len = len->length;
+		}
+
+		data->lengths_len = jwrite;
+	}
+
+	return data;
+}
+/* }}} */
+
 /* {{{ php_strtr_array
  */
 static void php_strtr_array(zval *return_value, char *str, int slen, HashTable *hash)
 {
-	zval **entry;
-	char  *string_key;
-	uint   string_key_len;
-	zval **trans;
-	zval   ctmp;
-	ulong num_key;
-	int minlen = 128*1024;
-	int maxlen = 0, pos, len, found;
-	char *key;
-	HashPosition hpos;
+	int pos;
 	smart_str result = {0};
-	HashTable tmp_hash;
+	struct strtr_array_data *data;
+	unsigned char last_c;
+	int recalculate = 1;
 
-	zend_hash_init(&tmp_hash, zend_hash_num_elements(hash), NULL, NULL, 0);
-	zend_hash_internal_pointer_reset_ex(hash, &hpos);
-	while (zend_hash_get_current_data_ex(hash, (void **)&entry, &hpos) == SUCCESS) {
-		switch (zend_hash_get_current_key_ex(hash, &string_key, &string_key_len, &num_key, 0, &hpos)) {
-			case HASH_KEY_IS_STRING:
-				len = string_key_len-1;
-				if (len < 1) {
-					zend_hash_destroy(&tmp_hash);
-					RETURN_FALSE;
-				}
-				zend_hash_add(&tmp_hash, string_key, string_key_len, entry, sizeof(zval*), NULL);
-				if (len > maxlen) {
-					maxlen = len;
-				}
-				if (len < minlen) {
-					minlen = len;
-				}
-				break;
-
-			case HASH_KEY_IS_LONG:
-				Z_TYPE(ctmp) = IS_LONG;
-				Z_LVAL(ctmp) = num_key;
-
-				convert_to_string(&ctmp);
-				len = Z_STRLEN(ctmp);
-				zend_hash_add(&tmp_hash, Z_STRVAL(ctmp), len+1, entry, sizeof(zval*), NULL);
-				zval_dtor(&ctmp);
-
-				if (len > maxlen) {
-					maxlen = len;
-				}
-				if (len < minlen) {
-					minlen = len;
-				}
-				break;
-		}
-		zend_hash_move_forward_ex(hash, &hpos);
+	data = php_strtr_array_prepare(slen, hash);
+	if (data == NULL) {
+		RETURN_FALSE;
 	}
 
-	key = emalloc(maxlen+1);
 	pos = 0;
 
-	while (pos < slen) {
-		if ((pos + maxlen) > slen) {
-			maxlen = slen - pos;
-		}
+	while (pos < slen - data->min_patlen + 1) {
+		int i;
+		for (i = 0; i < data->lengths_len; i++) {
+			struct strtr_lenspec *len_spec = &data->lengths[i];
+			struct strtr_pat_node *node;
+			strtr_h hash;
 
-		found = 0;
-		memcpy(key, str+pos, maxlen);
+			if (pos > slen - len_spec->length) {
+				continue;
+			}
 
-		for (len = maxlen; len >= minlen; len--) {
-			key[len] = 0;
+			/* update hash */
+			if (!recalculate) {
+				hash = len_spec->last_hash - last_c * len_spec->power;
+				hash = ((hash << 5) + hash) +
+						(unsigned char)str[pos + len_spec->length - 1];
+			} else {
+				hash = php_strtr_hash(&str[pos], len_spec->length);
+			}
+			len_spec->last_hash = hash;
 
-			if (zend_hash_find(&tmp_hash, key, len+1, (void**)&trans) == SUCCESS) {
-				char *tval;
-				int tlen;
-				zval tmp;
-
-				if (Z_TYPE_PP(trans) != IS_STRING) {
-					tmp = **trans;
-					zval_copy_ctor(&tmp);
-					convert_to_string(&tmp);
-					tval = Z_STRVAL(tmp);
-					tlen = Z_STRLEN(tmp);
-				} else {
-					tval = Z_STRVAL_PP(trans);
-					tlen = Z_STRLEN_PP(trans);
+			for (node = data->patterns[hash & STRTR_HT_MASK];
+					node != NULL;
+					node = node->next) {
+				if (node->str_len != len_spec->length
+						|| memcmp(&str[pos], node->str, node->str_len) != 0) {
+					continue;
 				}
 
-				smart_str_appendl(&result, tval, tlen);
-				pos += len;
-				found = 1;
-
-				if (Z_TYPE_PP(trans) != IS_STRING) {
-					zval_dtor(&tmp);
-				}
-				break;
+				smart_str_appendl(&result, node->repl, node->repl_len);
+				recalculate = 1;
+				pos += node->str_len;
+				goto end_outer_loop;
 			}
 		}
 
-		if (! found) {
-			smart_str_appendc(&result, str[pos++]);
-		}
+		smart_str_appendc(&result, str[pos]);
+		recalculate = 0;
+		last_c = str[pos];
+		pos++;
+end_outer_loop: ;
 	}
 
-	efree(key);
-	zend_hash_destroy(&tmp_hash);
-	smart_str_0(&result);
-	RETVAL_STRINGL(result.c, result.len, 0);
+	php_strtr_free_array_data(data);
+
+	if (pos < slen) {
+		smart_str_appendl(&result, &str[pos], slen - pos);
+	}
+
+	if (result.c != NULL) {
+		smart_str_0(&result);
+		RETVAL_STRINGL(result.c, result.len, 0);
+	} else {
+		RETURN_EMPTY_STRING();
+	}
 }
 /* }}} */
 
