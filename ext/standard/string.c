@@ -2864,6 +2864,7 @@ static struct strtr_array_data *php_strtr_array_prepare(int slen, HashTable *pat
 		int		free_str = 0,
 				free_repl = 0;
 		strtr_h	hash;
+		zval	*tzv;
 		struct strtr_pat_node
 				*stored_node,
 				*cur_node;
@@ -2895,7 +2896,7 @@ static struct strtr_array_data *php_strtr_array_prepare(int slen, HashTable *pat
 			cur_node->next_alloc = NULL;
 
 			if (Z_TYPE_PP(entry) != IS_STRING) {
-				zval *tzv = *entry;
+				tzv = *entry;
 				zval_addref_p(tzv);
 				SEPARATE_ZVAL(&tzv);
 				convert_to_string(tzv);
