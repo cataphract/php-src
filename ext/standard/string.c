@@ -2774,8 +2774,7 @@ PHPAPI char *php_strtr(char *str, int len, char *str_from, char *str_to, int trl
 }
 /* }}} */
 
-/* {{{ php_strtr_array_prepare
- */
+/* {{{ Defs for php_strtr_array */
 typedef uint16_t strtr_h;
 struct strtr_lenspec {
 	int length;
@@ -2801,6 +2800,8 @@ struct strtr_array_data {
 	int lengths_len;
 	struct strtr_lenspec lengths[1];
 };
+/* }}} */
+/* {{{ php_strtr_free_array_data */
 static void php_strtr_free_array_data(struct strtr_array_data *data)
 {
 	struct strtr_pat_node *node = data->first_alloc;
@@ -2817,6 +2818,8 @@ static void php_strtr_free_array_data(struct strtr_array_data *data)
 	}
 	efree(data);
 }
+/* }}} */
+/* {{{ php_strtr_compare_len */
 static inline int php_strtr_compare_len(const void *a1, const void *a2)
 {
 	const struct strtr_lenspec	*len1 = a1,
@@ -2824,6 +2827,8 @@ static inline int php_strtr_compare_len(const void *a1, const void *a2)
 
 	return len2->length - len1->length; /* reverse order */
 }
+/* }}} */
+/* {{{ php_strtr_hash */
 static inline strtr_h php_strtr_hash(const char *str, int len)
 {
 	strtr_h res = 0;
@@ -2833,6 +2838,10 @@ static inline strtr_h php_strtr_hash(const char *str, int len)
 	}
 	return res;
 }
+/* }}} */
+/* {{{ php_strtr_array_prepare
+ * Pre-processing step for php_strtr_array
+ */
 static struct strtr_array_data *php_strtr_array_prepare(int slen, HashTable *pats)
 {
 	struct strtr_array_data *data;
