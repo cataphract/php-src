@@ -22,7 +22,6 @@
 
 /* Synced with php 3.0 revision 1.193 1999-06-16 [ssb] */
 
-#define _GNU_SOURCE 1
 #include <stdio.h>
 #include <stdint.h>
 #include "php.h"
@@ -2848,7 +2847,7 @@ static inline void php_strtr_populate_shift(PATNREPL *patterns, int patnum, int 
 }
 /* }}} */
 /* {{{ php_strtr_compare_hash_suffix */
-static int php_strtr_compare_hash_suffix(const void *a, const void *b, void *ctx_g)
+static int php_strtr_compare_hash_suffix(const void *a, const void *b TSRMLS_DC, void *ctx_g)
 {
 	const PPRES		*res = ctx_g;
 	const PATNREPL	*pnr_a = a,
@@ -2971,7 +2970,13 @@ static PPRES *php_strtr_array_prepare(STR *text, PATNREPL *patterns, int patnum,
 
 	res->patterns = safe_emalloc(patnum, sizeof(*res->patterns), 0);
 	memcpy(res->patterns, patterns, sizeof(*patterns) * patnum);
-	qsort_r(res->patterns, patnum, sizeof(*res->patterns), php_strtr_compare_hash_suffix, res);
+#ifdef ZTS
+	zend_qsort_r(res->patterns, patnum, sizeof(*res->patterns),
+			php_strtr_compare_hash_suffix, res, NULL); /* tsrmls not needed */
+#else
+	zend_qsort_r(res->patterns, patnum, sizeof(*res->patterns),
+			php_strtr_compare_hash_suffix, res);
+#endif
 
 	res->prefix = safe_emalloc(patnum, sizeof(*res->prefix), 0);
 	for (i = 0; i < patnum; i++) {
