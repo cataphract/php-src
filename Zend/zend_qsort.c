@@ -21,101 +21,136 @@
 #include "zend.h"
 #include "zend_qsort.h"
 
-#include <limits.h>
+#include <sys/types.h>
+#include <stdlib.h>
 
-#define QSORT_STACK_SIZE (sizeof(size_t) * CHAR_BIT)
+static __inline char	*med3(char *, char *, char *, compare_r_func_t, void * TSRMLS_DC);
+static __inline void	 swapfunc(char *, char *, int, int);
 
-static void _zend_qsort_swap(void *a, void *b, size_t siz)
-{
-	register char  *tmp_a_char;
-	register char  *tmp_b_char;
-	register int   *tmp_a_int;
-	register int   *tmp_b_int;
-	register size_t i;
-	int             t_i;
-	char            t_c;
+#define min(a, b)	(a) < (b) ? a : b
 
-	tmp_a_int = (int *) a;
-	tmp_b_int = (int *) b;
-
-	for (i = sizeof(int); i <= siz; i += sizeof(int)) {
-		t_i = *tmp_a_int;
-		*tmp_a_int++ = *tmp_b_int;
-		*tmp_b_int++ = t_i;
-	}
-
-	tmp_a_char = (char *) tmp_a_int;
-	tmp_b_char = (char *) tmp_b_int;
-
-	for (i = i - sizeof(int) + 1; i <= siz; ++i) {
-		t_c = *tmp_a_char;
-		*tmp_a_char++ = *tmp_b_char;
-		*tmp_b_char++ = t_c;
-	}
+/*
+ * Qsort routine from Bentley & McIlroy's "Engineering a Sort Function".
+ */
+#define swapcode(TYPE, parmi, parmj, n) {		\
+	long i = (n) / sizeof (TYPE);			\
+	TYPE *pi = (TYPE *) (parmi);			\
+	TYPE *pj = (TYPE *) (parmj);			\
+	do {						\
+		TYPE	t = *pi;			\
+		*pi++ = *pj;				\
+		*pj++ = t;				\
+        } while (--i > 0);				\
 }
 
-ZEND_API void zend_qsort_r(void *base, size_t nmemb, size_t siz, compare_r_func_t compare, void *arg TSRMLS_DC)
+#define SWAPINIT(a, es) swaptype = ((char *)a - (char *)0) % sizeof(long) || \
+	es % sizeof(long) ? 2 : es == sizeof(long)? 0 : 1;
+
+static __inline void
+swapfunc(char *a, char *b, int n, int swaptype)
 {
-	void           *begin_stack[QSORT_STACK_SIZE];
-	void           *end_stack[QSORT_STACK_SIZE];
-	register char  *begin;
-	register char  *end;
-	register char  *seg1;
-	register char  *seg2;
-	register char  *seg2p;
-	register int    loop;
-	uint            offset;
+	if (swaptype <= 1)
+		swapcode(long, a, b, n)
+	else
+		swapcode(char, a, b, n)
+}
 
-	begin_stack[0] = (char *) base;
-	end_stack[0]   = (char *) base + ((nmemb - 1) * siz);
+#define swap(a, b)					\
+	if (swaptype == 0) {				\
+		long t = *(long *)(a);			\
+		*(long *)(a) = *(long *)(b);		\
+		*(long *)(b) = t;			\
+	} else						\
+		swapfunc(a, b, es, swaptype)
 
-	for (loop = 0; loop >= 0; --loop) {
-		begin = begin_stack[loop];
-		end   = end_stack[loop];
+#define vecswap(a, b, n)	if ((n) > 0) swapfunc(a, b, n, swaptype)
 
-		while (begin < end) {
-			offset = (end - begin) >> 1;
-			_zend_qsort_swap(begin, begin + (offset - (offset % siz)), siz);
+static __inline char *
+med3(char *a, char *b, char *c, compare_r_func_t cmp, void *arg TSRMLS_DC) 
+{
+	return cmp(a, b TSRMLS_CC, arg) < 0 ?
+	       (cmp(b, c TSRMLS_CC, arg) < 0 ? b : (cmp(a, c TSRMLS_CC, arg) < 0 ? c : a ))
+              :(cmp(b, c TSRMLS_CC, arg) > 0 ? b : (cmp(a, c TSRMLS_CC, arg) < 0 ? a : c ));
+}
 
-			seg1 = begin + siz;
-			seg2 = end;
+ZEND_API void
+zend_qsort_r(void *aa, size_t n, size_t es, compare_r_func_t cmp, void *arg TSRMLS_DC)
+{
+	char *pa, *pb, *pc, *pd, *pl, *pm, *pn;
+	int d, r, swaptype, swap_cnt;
+	char *a = aa;
 
-			while (1) {
-				for (; seg1 < seg2 && compare(begin, seg1 TSRMLS_CC, arg) > 0;
-				     seg1 += siz);
-
-				for (; seg2 >= seg1 && compare(seg2, begin TSRMLS_CC, arg) > 0;
-				     seg2 -= siz);
-				
-				if (seg1 >= seg2)
-					break;
-				
-				_zend_qsort_swap(seg1, seg2, siz);
-
-				seg1 += siz;
-				seg2 -= siz;
-			}
-
-			_zend_qsort_swap(begin, seg2, siz);
-
-			seg2p = seg2;
-			
-			if ((seg2p - begin) <= (end - seg2p)) {
-				if ((seg2p + siz) < end) {
-					begin_stack[loop] = seg2p + siz;
-					end_stack[loop++] = end;
-				}
-				end = seg2p - siz;
-			}
-			else {
-				if ((seg2p - siz) > begin) {
-					begin_stack[loop] = begin;
-					end_stack[loop++] = seg2p - siz;
-				}
-				begin = seg2p + siz;
-			}
-		}
+loop:	SWAPINIT(a, es);
+	swap_cnt = 0;
+	if (n < 7) {
+		for (pm = (char *)a + es; pm < (char *) a + n * es; pm += es)
+			for (pl = pm; pl > (char *) a && cmp(pl - es, pl TSRMLS_CC, arg) > 0;
+			     pl -= es)
+				swap(pl, pl - es);
+		return;
 	}
+	pm = (char *)a + (n / 2) * es;
+	if (n > 7) {
+		pl = (char *)a;
+		pn = (char *)a + (n - 1) * es;
+		if (n > 40) {
+			d = (n / 8) * es;
+			pl = med3(pl, pl + d, pl + 2 * d, cmp, arg TSRMLS_CC);
+			pm = med3(pm - d, pm, pm + d, cmp, arg TSRMLS_CC);
+			pn = med3(pn - 2 * d, pn - d, pn, cmp, arg TSRMLS_CC);
+		}
+		pm = med3(pl, pm, pn, cmp, arg TSRMLS_CC);
+	}
+	swap(a, pm);
+	pa = pb = (char *)a + es;
+
+	pc = pd = (char *)a + (n - 1) * es;
+	for (;;) {
+		while (pb <= pc && (r = cmp(pb, a TSRMLS_CC, arg)) <= 0) {
+			if (r == 0) {
+				swap_cnt = 1;
+				swap(pa, pb);
+				pa += es;
+			}
+			pb += es;
+				}
+		while (pb <= pc && (r = cmp(pc, a TSRMLS_CC, arg)) >= 0) {
+			if (r == 0) {
+				swap_cnt = 1;
+				swap(pc, pd);
+				pd -= es;
+			}
+			pc -= es;
+				}
+		if (pb > pc)
+			break;
+		swap(pb, pc);
+		swap_cnt = 1;
+		pb += es;
+		pc -= es;
+			}
+	if (swap_cnt == 0) {  /* Switch to insertion sort */
+		for (pm = (char *) a + es; pm < (char *) a + n * es; pm += es)
+			for (pl = pm; pl > (char *) a && cmp(pl - es, pl TSRMLS_CC, arg) > 0;
+			     pl -= es)
+				swap(pl, pl - es);
+		return;
+		}
+
+	pn = (char *)a + n * es;
+	r = min(pa - (char *)a, pb - pa);
+	vecswap(a, pb - r, r);
+	r = min(pd - pc, pn - pd - (int)es);
+	vecswap(pb, pn - r, r);
+	if ((r = pb - pa) > (int)es)
+		zend_qsort_r(a, r / es, es, cmp, arg TSRMLS_CC);
+	if ((r = pd - pc) > (int)es) {
+		/* Iterate rather than recurse to save stack space */
+		a = pn - r;
+		n = r / es;
+		goto loop;
+	}
+	/* qsort(pn - r, r / es, es, cmp); */
 }
 
 ZEND_API void zend_qsort(void *base, size_t nmemb, size_t siz, compare_func_t compare TSRMLS_DC)
