@@ -105,75 +105,121 @@ static inline unsigned int get_next_char(
 	switch (charset) {
 	case cs_utf_8:
 		{
-			/* We'll follow strategy 2. from section 3.6.1 of UTR #36:
-			 * "In a reported illegal byte sequence, do not include any
-			 *  non-initial byte that encodes a valid character or is a leading
-			 *  byte for a valid sequence." */
 			unsigned char c;
+			int state = 0;
 			c = str[pos];
-			if (c < 0x80) {
-				this_char = c;
-				pos++;
-			} else if (c < 0xc2) {
-				MB_FAILURE(pos, 1);
-			} else if (c < 0xe0) {
-				if (!CHECK_LEN(pos, 2))
+next_state:
+			if (state >= 0x10 && state < 0x20) {
+				if (!CHECK_LEN(pos, 2)) {
 					MB_FAILURE(pos, 1);
-
-				if (!utf8_trail(str[pos + 1])) {
-					MB_FAILURE(pos, utf8_lead(str[pos + 1]) ? 1 : 2);
 				}
-				this_char = ((c & 0x1f) << 6) | (str[pos + 1] & 0x3f);
-				if (this_char < 0x80) { /* non-shortest form */
+			} else if (state >= 0x20 && state < 0x30) {
+				if (!CHECK_LEN(pos, 3)) {
 					MB_FAILURE(pos, 2);
 				}
-				pos += 2;
-			} else if (c < 0xf0) {
-				size_t avail = str_len - pos;
-
-				if (avail < 3 ||
-						!utf8_trail(str[pos + 1]) || !utf8_trail(str[pos + 2])) {
-					if (avail < 2 || utf8_lead(str[pos + 1]))
-						MB_FAILURE(pos, 1);
-					else if (avail < 3 || utf8_lead(str[pos + 2]))
-						MB_FAILURE(pos, 2);
-					else
-						MB_FAILURE(pos, 3);
-				}
-
-				this_char = ((c & 0x0f) << 12) | ((str[pos + 1] & 0x3f) << 6) | (str[pos + 2] & 0x3f);
-				if (this_char < 0x800) { /* non-shortest form */
-					MB_FAILURE(pos, 3);
-				} else if (this_char >= 0xd800 && this_char <= 0xdfff) { /* surrogate */
+			} else if (state >= 0x30) {
+				if (!CHECK_LEN(pos, 4)) {
 					MB_FAILURE(pos, 3);
 				}
-				pos += 3;
-			} else if (c < 0xf5) {
-				size_t avail = str_len - pos;
-
-				if (avail < 4 ||
-						!utf8_trail(str[pos + 1]) || !utf8_trail(str[pos + 2]) ||
-						!utf8_trail(str[pos + 3])) {
-					if (avail < 2 || utf8_lead(str[pos + 1]))
-						MB_FAILURE(pos, 1);
-					else if (avail < 3 || utf8_lead(str[pos + 2]))
-						MB_FAILURE(pos, 2);
-					else if (avail < 4 || utf8_lead(str[pos + 3]))
-						MB_FAILURE(pos, 3);
-					else
-						MB_FAILURE(pos, 4);
-				}
-				
-				this_char = ((c & 0x07) << 18) | ((str[pos + 1] & 0x3f) << 12) | ((str[pos + 2] & 0x3f) << 6) | (str[pos + 3] & 0x3f);
-				if (this_char < 0x10000 || this_char > 0x10FFFF) { /* non-shortest form or outside range */
-					MB_FAILURE(pos, 4);
-				}
-				pos += 4;
-			} else {
-				MB_FAILURE(pos, 1);
 			}
+			switch (state) {
+			case 0:
+				if (c < 0x80) {
+					this_char = c;
+					pos++;
+					goto end;
+				} else if (c < 0xc2) {
+					MB_FAILURE(pos, 1);
+				} else if (c <= 0xdf) { /* c2..df */
+					state = 0x10;
+				} else if (c == 0xe0) {
+					state = 0x11;
+				} else if (c <= 0xec) { /* e1..ec */
+					state = 0x12;
+				} else if (c == 0xed) {
+					state = 0x13;
+				} else if (c < 0xf0) { /* ee..ef */
+					state = 0x12;
+				} else if (c == 0xf0) {
+					state = 0x14;
+				} else if (c <= 0xf3) { /* f1..f3 */
+					state = 0x15;
+				} else if (c == 0xf4) {
+					state = 0x16;
+				} else {
+					MB_FAILURE(pos, 1);
+				}
+				break;
+			case 0x10: /* c2..df */
+				if (!utf8_trail(str[pos + 1])) {
+					MB_FAILURE(pos, 1);
+				}
+				this_char = ((c & 0x1f) << 6) | (str[pos + 1] & 0x3f);
+				pos += 2;
+				goto end;
+			case 0x11: /* e0 */
+				if (str[pos + 1] < 0xa0 || str[pos + 1] > 0xbf) {
+					MB_FAILURE(pos, 1);
+				}
+				state = 0x20;
+				break;
+			case 0x12: /* e1..ec or ee..ef */
+				if (!utf8_trail(str[pos + 1])) {
+					MB_FAILURE(pos, 1);
+				}
+				state = 0x20;
+				break;
+			case 0x13: /* ed */
+				if (str[pos + 1] < 0x80 || str[pos + 1] > 0x9f) {
+					MB_FAILURE(pos, 1);
+				}
+				state = 0x20;
+				break;
+			case 0x14: /* f0 */
+				if (str[pos + 1] < 0x90 || str[pos + 1] > 0xbf) {
+					MB_FAILURE(pos, 1);
+				}
+				state = 0x21;
+				break;
+			case 0x15: /* f1..f3 */
+				if (!utf8_trail(str[pos + 1])) {
+					MB_FAILURE(pos, 1);
+				}
+				state = 0x21;
+				break;
+			case 0x16: /* f4 */
+				if (str[pos + 1] < 0x80 || str[pos + 1] > 0x8f) {
+					MB_FAILURE(pos, 1);
+				}
+				state = 0x21;
+				break;
+
+			case 0x20:
+				if (!utf8_trail(str[pos + 2])) {
+					MB_FAILURE(pos, 2);
+				}
+				this_char = ((c & 0x0f) << 12) | ((str[pos + 1] & 0x3f) << 6) | (str[pos + 2] & 0x3f);
+				pos += 3;
+				goto end;
+			case 0x21:
+				if (!utf8_trail(str[pos + 2])) {
+					MB_FAILURE(pos, 2);
+				}
+				state = 0x30;
+				break;
+
+			case 0x30:
+				if (!utf8_trail(str[pos + 3])) {
+					MB_FAILURE(pos, 3);
+				}
+				this_char = ((c & 0x07) << 18) | ((str[pos + 1] & 0x3f) << 12) | ((str[pos + 2] & 0x3f) << 6) | (str[pos + 3] & 0x3f);
+				pos += 4;
+				goto end;
+			}
+			goto next_state;
+end:
+			break;
 		}
-		break;
 
 	case cs_big5:
 		/* reference http://demo.icu-project.org/icu-bin/convexp?conv=big5 */
