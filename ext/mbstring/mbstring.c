@@ -203,7 +203,7 @@ zend_module_entry mbstring_module_entry = {
 	PHP_MODULE_GLOBALS(mbstring),
 	PHP_GINIT(mbstring),
 	PHP_GSHUTDOWN(mbstring),
-	NULL,
+	ZEND_MODULE_POST_ZEND_DEACTIVATE_N(mbstring),
 	STANDARD_MODULE_PROPERTIES_EX
 };
 /* }}} */
@@ -1144,12 +1144,6 @@ PHP_RINIT_FUNCTION(mbstring)
 /* {{{ PHP_RSHUTDOWN_FUNCTION(mbstring) */
 PHP_RSHUTDOWN_FUNCTION(mbstring)
 {
-	if (MBSTRG(current_detect_order_list) != NULL) {
-		efree(ZEND_VOIDP(MBSTRG(current_detect_order_list)));
-		MBSTRG(current_detect_order_list) = NULL;
-		MBSTRG(current_detect_order_list_size) = 0;
-	}
-
 	/* clear http input identification. */
 	MBSTRG(http_input_identify) = NULL;
 	MBSTRG(http_input_identify_post) = NULL;
@@ -1178,6 +1172,21 @@ PHP_RSHUTDOWN_FUNCTION(mbstring)
 #ifdef HAVE_MBREGEX
 	PHP_RSHUTDOWN(mb_regex) (INIT_FUNC_ARGS_PASSTHRU);
 #endif
+
+	return SUCCESS;
+}
+/* }}} */
+
+/* {{{ ZEND_MODULE_POST_ZEND_DEACTIVATE_D(mbstring) */
+ZEND_MODULE_POST_ZEND_DEACTIVATE_D(mbstring)
+{
+	/* Set in RINIT, so free it here rather than in RSHUTDOWN, which is skipped
+	 * when a later RINIT fails */
+	if (MBSTRG(current_detect_order_list) != NULL) {
+		efree(ZEND_VOIDP(MBSTRG(current_detect_order_list)));
+		MBSTRG(current_detect_order_list) = NULL;
+		MBSTRG(current_detect_order_list_size) = 0;
+	}
 
 	return SUCCESS;
 }

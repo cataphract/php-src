@@ -2243,6 +2243,7 @@ PHP_INI_BEGIN()
 	STD_PHP_INI_BOOLEAN("zend_test.register_passes", "0", PHP_INI_SYSTEM, OnUpdateBool, register_passes, zend_zend_test_globals, zend_test_globals)
 	STD_PHP_INI_BOOLEAN("zend_test.rearm_vm_interrupt", "0", PHP_INI_SYSTEM, OnUpdateBool, rearm_vm_interrupt, zend_zend_test_globals, zend_test_globals)
 	STD_PHP_INI_BOOLEAN("zend_test.print_stderr_mshutdown", "0", PHP_INI_SYSTEM, OnUpdateBool, print_stderr_mshutdown, zend_zend_test_globals, zend_test_globals)
+	STD_PHP_INI_ENTRY("zend_test.rinit_error_query", "", PHP_INI_SYSTEM, OnUpdateStr, rinit_error_query, zend_zend_test_globals, zend_test_globals)
 #ifdef HAVE_COPY_FILE_RANGE
 	STD_PHP_INI_ENTRY("zend_test.limit_copy_file_range", "-1", PHP_INI_ALL, OnUpdateLong, limit_copy_file_range, zend_zend_test_globals, zend_test_globals)
 #endif
@@ -2502,6 +2503,11 @@ PHP_MSHUTDOWN_FUNCTION(zend_test)
 
 PHP_RINIT_FUNCTION(zend_test)
 {
+	if (ZSTR_LEN(ZT_G(rinit_error_query)) && SG(request_info).query_string
+			&& strcmp(ZSTR_VAL(ZT_G(rinit_error_query)), SG(request_info).query_string) == 0) {
+		zend_error_noreturn(E_ERROR, "Request startup failure requested by zend_test.rinit_error_query");
+	}
+
 	ALLOC_HASHTABLE(ZT_G(global_weakmap));
 	zend_hash_init(ZT_G(global_weakmap), 8, NULL, ZVAL_PTR_DTOR, 0);
 	ZT_G(observer_nesting_depth) = 0;

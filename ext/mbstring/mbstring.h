@@ -49,6 +49,7 @@ PHP_MINIT_FUNCTION(mbstring);
 PHP_MSHUTDOWN_FUNCTION(mbstring);
 PHP_RINIT_FUNCTION(mbstring);
 PHP_RSHUTDOWN_FUNCTION(mbstring);
+ZEND_MODULE_POST_ZEND_DEACTIVATE_D(mbstring);
 PHP_MINFO_FUNCTION(mbstring);
 
 MBSTRING_API char *php_mb_safe_strrchr(const char *s, unsigned int c, size_t nbytes, const mbfl_encoding *enc);
